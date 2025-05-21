@@ -1,10 +1,14 @@
 let apiUrl = "";
 let apiKey = "";
 let speechSpeed = 1.0;
-let voice = "af_bella+af_sky";
-let model = "kokoro";
+let voice = "tara";  // Default to Orpheus 'tara' voice
+let model = "orpheus";  // Default to orpheus model
 let streamingMode = false;
 let currentAudio = null;
+let mediaSource = null;
+let sourceBuffer = null;
+let audioQueue = [];
+let isSourceOpen = false;
 let isMobile = false;
 
 // Platform detection
@@ -36,11 +40,11 @@ function handleMobileClick(tab) {
 
 // Load settings from local storage
 browser.storage.local.get(["apiUrl", "apiKey", "speechSpeed", "voice", "model", "streamingMode"]).then((data) => {
-  apiUrl = data.apiUrl || "http://host.docker.internal:8880/v1";
+  apiUrl = data.apiUrl || "http://localhost:5005/v1/audio/speech";
   apiKey = data.apiKey || "not-needed";
   speechSpeed = data.speechSpeed || 1.0;
-  voice = data.voice || "af_bella+af_sky";
-  model = data.model || "kokoro";
+  voice = data.voice || "tara";
+  model = data.model || "orpheus";
   streamingMode = data.streamingMode || false; // Load streaming mode setting
 });
 
@@ -68,10 +72,26 @@ browser.storage.onChanged.addListener((changes) => {
 
 // Stop Playback Handler
 browser.runtime.onMessage.addListener((message) => {
-  if (message.action === "stopPlayback" && currentAudio) {
-    currentAudio.pause();
-    currentAudio = null;
-    console.log("Playback stopped.");
+  if (message.action === "stopPlayback") {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+      console.log("File mode playback stopped.");
+    }
+    
+    // Also handle stopping MediaSource streaming if active
+    if (mediaSource && mediaSource.readyState === 'open') {
+      try {
+        mediaSource.endOfStream();
+        mediaSource = null;
+        sourceBuffer = null;
+        audioQueue = [];
+        isSourceOpen = false;
+        console.log("Streaming mode playback stopped.");
+      } catch (e) {
+        console.error("Error stopping MediaSource stream:", e);
+      }
+    }
   }
 });
 
@@ -128,7 +148,7 @@ function processText(text) {
     model: model,
     input: text,
     voice: voice,
-    response_format: streamingMode ? "pcm" : "mp3", // Use PCM for streaming, MP3 for file mode
+    response_format: "wav", // Orpheus TTS supports WAV format
     speed: speechSpeed
   };
 
@@ -141,49 +161,182 @@ function processText(text) {
   console.log("Request payload:", payload);
 
   if (streamingMode) {
-    // Streaming Mode
+    // Streaming Mode with MediaSource
+    try {
+      // Clean up any previous playback
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+      }
+      if (mediaSource && mediaSource.readyState === 'open') {
+        mediaSource.endOfStream();
+      }
+      
+      // Set up new audio streaming
+      mediaSource = new MediaSource();
+      audioQueue = [];
+      isSourceOpen = false;
+      
+      // Create audio element
+      currentAudio = new Audio();
+      currentAudio.src = URL.createObjectURL(mediaSource);
+      
+      // Handle the sourceopen event
+      mediaSource.addEventListener('sourceopen', () => {
+        console.log("MediaSource opened");
+        isSourceOpen = true;
+        
+        try {
+          // In Safari/Firefox use audio/wav; in Chrome use audio/wav with codecs param
+          sourceBuffer = mediaSource.addSourceBuffer('audio/wav');
+          
+          // Process the queue if we have any chunks waiting
+          if (audioQueue.length > 0) {
+            processAudioQueue();
+          }
+          
+          // Start the audio playback
+          currentAudio.play().catch(e => console.error("Error starting playback:", e));
+        } catch (e) {
+          console.error("Error setting up MediaSource:", e);
+          // Fallback to non-streaming mode
+          streamWithFetch();
+        }
+      });
+      
+      // Fetch the streaming audio
+      streamWithFetch();
+      
+    } catch (error) {
+      console.error("Error setting up streaming:", error);
+      alert("Streaming mode failed. Falling back to file mode.");
+      streamingMode = false;
+      processText(text); // Retry with file mode
+    }
+  } else {
+    // File Mode - unchanged
+    fetchAudioFile();
+  }
+  
+  // Function to process the audio queue
+  function processAudioQueue() {
+    if (!sourceBuffer || !isSourceOpen) return;
+    
+    if (audioQueue.length > 0 && !sourceBuffer.updating) {
+      const chunk = audioQueue.shift();
+      try {
+        // Only append if we have data
+        if (chunk.byteLength > 0) {
+          sourceBuffer.appendBuffer(chunk);
+        }
+      } catch (e) {
+        console.error("Error appending buffer:", e);
+      }
+    }
+  }
+  
+  // Function to stream with fetch
+  function streamWithFetch() {
     fetch(apiUrl, {
       method: "POST",
       headers: headers,
       body: JSON.stringify(payload)
     })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`API request failed with status: ${response.status}`);
-        }
-        const reader = response.body.getReader();
-        const audioContext = new AudioContext();
-        let audioBuffer = null;
-
-        const processStream = ({ done, value }) => {
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`API request failed with status: ${response.status}`);
+      }
+      
+      // Skip WAV header on first chunk (44 bytes)
+      let isFirstChunk = true;
+      let headerProcessed = false;
+      const reader = response.body.getReader();
+      
+      // Read function that processes each chunk
+      function readChunk() {
+        reader.read().then(({ done, value }) => {
           if (done) {
-            console.log("Streaming complete.");
+            console.log("Stream complete");
+            if (mediaSource && mediaSource.readyState === 'open') {
+              try {
+                mediaSource.endOfStream();
+              } catch (e) {
+                console.error("Error ending stream:", e);
+              }
+            }
             return;
           }
-
-          // Process PCM chunks (example: convert to audio buffer and play)
+          
           if (value) {
-            audioContext.decodeAudioData(value.buffer, (buffer) => {
-              audioBuffer = buffer;
-              const source = audioContext.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(audioContext.destination);
-              source.start();
-            });
+            try {
+              // For the first chunk, we need to handle the WAV header properly
+              if (isFirstChunk && !headerProcessed) {
+                isFirstChunk = false;
+                headerProcessed = true;
+                
+                // Store the chunk in the queue to be processed
+                if (isSourceOpen && sourceBuffer) {
+                  // Append this chunk directly if sourceBuffer is ready
+                  if (!sourceBuffer.updating) {
+                    sourceBuffer.appendBuffer(value.buffer);
+                  } else {
+                    audioQueue.push(value.buffer);
+                  }
+                } else {
+                  // Queue for when sourceBuffer becomes available
+                  audioQueue.push(value.buffer);
+                }
+              } else {
+                // For subsequent chunks
+                if (isSourceOpen && sourceBuffer) {
+                  if (!sourceBuffer.updating) {
+                    sourceBuffer.appendBuffer(value.buffer);
+                  } else {
+                    audioQueue.push(value.buffer);
+                  }
+                } else {
+                  audioQueue.push(value.buffer);
+                }
+              }
+              
+              // Set up event listener for updateend if not already set
+              if (sourceBuffer && !sourceBuffer.onupdateend) {
+                sourceBuffer.onupdateend = processAudioQueue;
+              }
+              
+            } catch (e) {
+              console.error("Error processing audio chunk:", e);
+            }
           }
-
-          // Read the next chunk
-          reader.read().then(processStream);
-        };
-
-        // Start reading the stream
-        reader.read().then(processStream);
-      })
-      .catch((error) => {
-        console.error("Error calling TTS API:", error);
-      });
-  } else {
-    // File Mode
+          
+          // Continue reading
+          readChunk();
+        }).catch(error => {
+          console.error("Error reading chunk:", error);
+          // Try to end the stream gracefully
+          if (mediaSource && mediaSource.readyState === 'open') {
+            try {
+              mediaSource.endOfStream();
+            } catch (e) {
+              console.error("Error ending stream after read error:", e);
+            }
+          }
+        });
+      }
+      
+      // Start reading
+      readChunk();
+    })
+    .catch(error => {
+      console.error("Error setting up fetch:", error);
+      // Fallback to file mode
+      streamingMode = false;
+      processText(text);
+    });
+  }
+  
+  // Function to fetch and play complete audio file
+  function fetchAudioFile() {
     fetch(apiUrl, {
       method: "POST",
       headers: headers,
@@ -198,10 +351,11 @@ function processText(text) {
       .then((audioBlob) => {
         const audioUrl = URL.createObjectURL(audioBlob);
         currentAudio = new Audio(audioUrl);
-        currentAudio.play();
+        currentAudio.play().catch(e => console.error("Error playing audio:", e));
       })
       .catch((error) => {
         console.error("Error calling TTS API:", error);
+        alert(`TTS API Error: ${error.message}`);
       });
   }
 }
