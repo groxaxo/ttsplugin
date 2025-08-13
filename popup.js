@@ -1,63 +1,52 @@
 document.addEventListener("DOMContentLoaded", () => {
-  const apiUrlInput = document.getElementById("apiUrl");
-  const apiKeyInput = document.getElementById("apiKey");
-  const speedInput = document.getElementById("speed");
-  const saveButton = document.getElementById("saveButton");
-  const voiceInput = document.getElementById("voice");
-  const modelInput = document.getElementById("model");
-  const streamingModeInput = document.getElementById("streamingMode");
+  const recordButton = document.getElementById("recordButton");
   const stopButton = document.getElementById("stopButton");
+  const transcribedText = document.getElementById("transcribedText");
 
-  // Load settings from local storage
-  browser.storage.local.get(["apiUrl", "apiKey", "speechSpeed", "voice", "model", "streamingMode"])
-    .then((data) => {
-      apiUrlInput.value = data.apiUrl || "http://host.docker.internal:8880/v1/audio/speech";
-      apiKeyInput.value = data.apiKey || "not-needed";
-      voiceInput.value = data.voice || "af_bella+bf_emma+af_nicole";
-      speedInput.value = data.speechSpeed || 1.0;
-      modelInput.value = data.model || "kokoro";
-      streamingModeInput.checked = data.streamingMode || false; // Load streaming mode setting
-    })
-    .catch((error) => {
-      console.error("Error loading settings:", error);
-    });
+  let mediaRecorder;
+  let audioChunks = [];
+  let isRecording = false;
 
-  // Save settings to local storage
-  saveButton.addEventListener("click", async () => {
-    const apiUrl = apiUrlInput.value.trim();
-    const apiKey = apiKeyInput.value.trim();
-    const speed = parseFloat(speedInput.value);
-    const voice = voiceInput.value.trim();
-    const model = modelInput.value.trim();
-    const streamingMode = streamingModeInput.checked;
+  recordButton.addEventListener("click", async () => {
+    if (!isRecording) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = (event) => {
+          audioChunks.push(event.data);
+        };
+        mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+          audioChunks = [];
 
-    if (!apiUrl) {
-      alert("API URL cannot be empty.");
-      return;
-    }
-    if (isNaN(speed) || speed < 0.5 || speed > 2.0) {
-      alert("Speech speed must be between 0.5 and 2.0.");
-      return;
-    }
+          // The audio blob is not directly serializable, so we read it into an array buffer
+          const audioBuffer = await audioBlob.arrayBuffer();
 
-    try {
-      await browser.storage.local.set({
-        apiUrl,
-        apiKey,
-        voice,
-        speechSpeed: speed,
-        model,
-        streamingMode // Save streaming mode setting
-      });
-      alert("Settings saved!");
-    } catch (error) {
-      console.error("Save failed:", error);
-      alert("Failed to save.");
+          // Send the audio buffer to the background script
+          chrome.runtime.sendMessage({ action: "transcribeAudio", audio: audioBuffer });
+        };
+        mediaRecorder.start();
+        recordButton.textContent = "Stop Recording";
+        isRecording = true;
+      } catch (error) {
+        console.error("Error accessing microphone:", error);
+        alert("Could not access microphone. Please check permissions.");
+      }
+    } else {
+      mediaRecorder.stop();
+      recordButton.textContent = "Start Recording";
+      isRecording = false;
     }
   });
 
-  // Stop Playback Button
   stopButton.addEventListener("click", () => {
-    browser.runtime.sendMessage({ action: "stopPlayback" });
+    chrome.runtime.sendMessage({ action: "stopPlayback" });
+  });
+
+  // Listen for transcribed text from the background script
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.action === "transcriptionResult") {
+      transcribedText.value = message.text;
+    }
   });
 });

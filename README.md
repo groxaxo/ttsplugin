@@ -1,36 +1,36 @@
 
-# Custom TTS Reader
+# In-Browser Speech-to-Text and TTS
 
-TTS implementation for the OpenAI api format. It can probably be used for any OpenAI api compliant service but its made for remsky/Kokoro-FastAPI. 
-Click 'Read Selected Text' in the context menu after highlighting text.
+This is a browser extension that provides in-browser speech-to-text (STT) and text-to-speech (TTS) functionality using the `transformers.js` library. All processing is done locally in your browser, so your data stays private.
 
-This addon is for Firefox!
+## Features
 
+*   **Speech-to-Text:** Record audio from your microphone and have it transcribed to text using the Whisper model.
+*   **Text-to-Speech:** Highlight any text on a webpage, right-click, and select "Read Selected Text" to have it read aloud.
 
+## How to Use
 
-## Installation
+*   **Speech-to-Text:**
+    1.  Click the extension icon in the toolbar.
+    2.  Click "Start Recording" to begin recording audio.
+    3.  Click "Stop Recording" when you're finished.
+    4.  The transcribed text will appear in the text box.
 
-On Mozilla Addons:
-https://addons.mozilla.org/en-US/firefox/addon/custom-tts-reader/
-    
-## Description
+*   **Text-to-Speech:**
+    1.  Highlight any text on a webpage.
+    2.  Right-click the highlighted text.
+    3.  Select "Read Selected Text" from the context menu.
 
-Do you have your own OpenAI-compatible Speech endpoint running and want to use it in Firefox?
-This is a TTS implementation for the OpenAI API format. It can probably be used for any OpenAI api compliant service but its made for remsky/Kokoro-FastAPI.
+## Privacy
 
-Click 'Read Selected Text' in the context menu after highlighting text.
+All STT and TTS processing is done locally in your browser. No data is sent to any external servers.
 
-You can change the API URL, API key, speed and voice by clicking the extension icon in the toolbar.
-The streaming mode is not working for now since Firefox doesn't support PMC natively.
+## Technology
 
-Since you can host your own speech endpoint, privacy and accessibility are as good as the service you're running.
+This extension is powered by `transformers.js`, a JavaScript library for running machine learning models directly in the browser. It uses the following models:
 
-Personally I recommend using Kokoro FastAPI in a docker container:
-https://github.com/remsky/Kokoro-FastAPI/
-
-
-Note:
-This is just a quick implementation since I couldn't find a similar extension where you could use your own API endpoint anywhere. I am not a developer. The code might be jank, but it works. Feel free to improve it... or not :)
+*   **Speech-to-Text:** `Xenova/whisper-tiny.en`
+*   **Text-to-Speech:** `Xenova/speecht5_tts`
 
 
 ## License

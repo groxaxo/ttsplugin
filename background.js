@@ -1,9 +1,6 @@
-let apiUrl = "";
-let apiKey = "";
-let speechSpeed = 1.0;
-let voice = "tara";  // Default to Orpheus 'tara' voice
-let model = "orpheus";  // Default to orpheus model
-let streamingMode = false;
+import { pipeline, env } from './transformers.js';
+env.allowLocalModels = false;
+
 let currentAudio = null;
 let mediaSource = null;
 let sourceBuffer = null;
@@ -12,7 +9,7 @@ let isSourceOpen = false;
 let isMobile = false;
 
 // Platform detection
-browser.runtime.getPlatformInfo().then((info) => {
+chrome.runtime.getPlatformInfo().then((info) => {
   isMobile = info.os === "android";
   initializeExtension();
 });
@@ -20,59 +17,54 @@ browser.runtime.getPlatformInfo().then((info) => {
 function initializeExtension() {
   if (isMobile) {
     // Mobile setup
-    browser.browserAction.setPopup({ popup: "" });
-    browser.browserAction.onClicked.addListener(handleMobileClick);
+    chrome.action.setPopup({ popup: "" });
+    chrome.action.onClicked.addListener(handleMobileClick);
   } else {
     // Desktop setup
     createContextMenu();
-    browser.runtime.onInstalled.addListener(createContextMenu);
+    chrome.runtime.onInstalled.addListener(createContextMenu);
   }
 }
 
 function handleMobileClick(tab) {
-  browser.tabs.executeScript({
-    code: "window.getSelection().toString();"
+  chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    function: () => window.getSelection().toString()
   }).then((results) => {
-    const selectedText = results[0];
+    const selectedText = results[0].result;
     if (selectedText) processText(selectedText);
   });
 }
 
-// Load settings from local storage
-browser.storage.local.get(["apiUrl", "apiKey", "speechSpeed", "voice", "model", "streamingMode"]).then((data) => {
-  apiUrl = data.apiUrl || "http://localhost:5005/v1/audio/speech";
-  apiKey = data.apiKey || "not-needed";
-  speechSpeed = data.speechSpeed || 1.0;
-  voice = data.voice || "tara";
-  model = data.model || "orpheus";
-  streamingMode = data.streamingMode || false; // Load streaming mode setting
-});
+// Whisper Transcription Handler
+let recognizer = null;
 
-// Update settings dynamically when changed
-browser.storage.onChanged.addListener((changes) => {
-  if (changes.apiUrl) {
-    apiUrl = changes.apiUrl.newValue;
+async function transcribe(audio) {
+  if (!recognizer) {
+    recognizer = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en');
   }
-  if (changes.apiKey) {
-    apiKey = changes.apiKey.newValue;
-  }
-  if (changes.speechSpeed) {
-    speechSpeed = changes.speechSpeed.newValue;
-  }
-  if (changes.voice) {
-    voice = changes.voice.newValue;
-  }
-  if (changes.model) {
-    model = changes.model.newValue;
-  }
-  if (changes.streamingMode) {
-    streamingMode = changes.streamingMode.newValue; // Update streaming mode
-  }
-});
 
-// Stop Playback Handler
-browser.runtime.onMessage.addListener((message) => {
-  if (message.action === "stopPlayback") {
+  const audio_data = new Float32Array(audio);
+  const result = await recognizer(audio_data);
+  return result.text;
+}
+
+chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+  if (message.action === "transcribeAudio") {
+    try {
+      // The audio data is received as an ArrayBuffer. We need to convert it to a Float32Array.
+      // This requires decoding and resampling, which is best done with an AudioContext.
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      const audioBuffer = await audioContext.decodeAudioData(message.audio);
+      const float32Array = audioBuffer.getChannelData(0);
+
+      const text = await transcribe(float32Array);
+      chrome.runtime.sendMessage({ action: "transcriptionResult", text: text });
+    } catch (error) {
+      console.error("Error transcribing audio:", error);
+      chrome.runtime.sendMessage({ action: "transcriptionResult", text: "Error: Could not transcribe audio." });
+    }
+  } else if (message.action === "stopPlayback") {
     if (currentAudio) {
       currentAudio.pause();
       currentAudio = null;
@@ -98,15 +90,15 @@ browser.runtime.onMessage.addListener((message) => {
 // Function to create or recreate the context menu
 function createContextMenu() {
   // Remove any existing context menu item to avoid duplicates
-  browser.contextMenus.removeAll(() => {
+  chrome.contextMenus.removeAll(() => {
     // Create the "Read Selected Text" context menu item
-    browser.contextMenus.create({
+    chrome.contextMenus.create({
       id: "readText",
       title: "Read Selected Text",
       contexts: ["selection"]
     }, () => {
-      if (browser.runtime.lastError) {
-        console.error("Error creating context menu:", browser.runtime.lastError);
+      if (chrome.runtime.lastError) {
+        console.error("Error creating context menu:", chrome.runtime.lastError);
       } else {
         console.log("Context menu created successfully.");
       }
@@ -114,248 +106,35 @@ function createContextMenu() {
   });
 }
 
-// Create the context menu when the extension is installed or updated
-browser.runtime.onInstalled.addListener(() => {
-  console.log("Extension installed or updated. Creating context menu...");
-  createContextMenu();
-});
-
-// Recreate the context menu each time it is opened
-browser.contextMenus.onShown.addListener((info) => {
-  console.log("Context menu opened. Recreating context menu...");
-  createContextMenu();
-});
-
 // Listener for context menu item click
-browser.contextMenus.onClicked.addListener((info) => {
-  console.log("Context menu clicked: ", info);  // Debugging log
+chrome.contextMenus.onClicked.addListener(async (info) => {
   if (info.menuItemId === "readText" && info.selectionText) {
-    console.log("Text to read: ", info.selectionText); // Debugging log
-    processText(info.selectionText);
-  } else {
-    console.log("No text selected or menu item ID mismatch.");
+    await processText(info.selectionText);
   }
 });
 
-// Process selected text
-function processText(text) {
-  if (!apiUrl) {
-    console.error("API URL not set.");
-    return;
-  }
+let synthesizer = null;
+let speaker_embeddings = null;
 
-  const payload = {
-    model: model,
-    input: text,
-    voice: voice,
-    response_format: "wav", // Orpheus TTS supports WAV format
-    speed: speechSpeed
-  };
+async function processText(text) {
+    if (!synthesizer) {
+        synthesizer = await pipeline('text-to-speech', 'Xenova/speecht5_tts');
+        // The speaker embeddings are not part of the model and need to be loaded separately
+        const speaker_embeddings_url = 'https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/speaker_embeddings.bin';
+        const speaker_embeddings_response = await fetch(speaker_embeddings_url);
+        speaker_embeddings = new Float32Array(await speaker_embeddings_response.arrayBuffer());
+    }
 
-  const headers = {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${apiKey}`
-  };
-
-  console.log("Sending request to API URL:", apiUrl);
-  console.log("Request payload:", payload);
-
-  if (streamingMode) {
-    // Streaming Mode with MediaSource
     try {
-      // Clean up any previous playback
-      if (currentAudio) {
-        currentAudio.pause();
-        currentAudio = null;
-      }
-      if (mediaSource && mediaSource.readyState === 'open') {
-        mediaSource.endOfStream();
-      }
-      
-      // Set up new audio streaming
-      mediaSource = new MediaSource();
-      audioQueue = [];
-      isSourceOpen = false;
-      
-      // Create audio element
-      currentAudio = new Audio();
-      currentAudio.src = URL.createObjectURL(mediaSource);
-      
-      // Handle the sourceopen event
-      mediaSource.addEventListener('sourceopen', () => {
-        console.log("MediaSource opened");
-        isSourceOpen = true;
-        
-        try {
-          // In Safari/Firefox use audio/wav; in Chrome use audio/wav with codecs param
-          sourceBuffer = mediaSource.addSourceBuffer('audio/wav');
-          
-          // Process the queue if we have any chunks waiting
-          if (audioQueue.length > 0) {
-            processAudioQueue();
-          }
-          
-          // Start the audio playback
-          currentAudio.play().catch(e => console.error("Error starting playback:", e));
-        } catch (e) {
-          console.error("Error setting up MediaSource:", e);
-          // Fallback to non-streaming mode
-          streamWithFetch();
-        }
-      });
-      
-      // Fetch the streaming audio
-      streamWithFetch();
-      
+        const wav = await synthesizer(text, { speaker_embeddings });
+        const audioContext = new AudioContext();
+        const audioBuffer = await audioContext.decodeAudioData(wav.audio.buffer);
+
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContext.destination);
+        source.start();
     } catch (error) {
-      console.error("Error setting up streaming:", error);
-      alert("Streaming mode failed. Falling back to file mode.");
-      streamingMode = false;
-      processText(text); // Retry with file mode
+        console.error("Error processing text for TTS:", error);
     }
-  } else {
-    // File Mode - unchanged
-    fetchAudioFile();
-  }
-  
-  // Function to process the audio queue
-  function processAudioQueue() {
-    if (!sourceBuffer || !isSourceOpen) return;
-    
-    if (audioQueue.length > 0 && !sourceBuffer.updating) {
-      const chunk = audioQueue.shift();
-      try {
-        // Only append if we have data
-        if (chunk.byteLength > 0) {
-          sourceBuffer.appendBuffer(chunk);
-        }
-      } catch (e) {
-        console.error("Error appending buffer:", e);
-      }
-    }
-  }
-  
-  // Function to stream with fetch
-  function streamWithFetch() {
-    fetch(apiUrl, {
-      method: "POST",
-      headers: headers,
-      body: JSON.stringify(payload)
-    })
-    .then(response => {
-      if (!response.ok) {
-        throw new Error(`API request failed with status: ${response.status}`);
-      }
-      
-      // Skip WAV header on first chunk (44 bytes)
-      let isFirstChunk = true;
-      let headerProcessed = false;
-      const reader = response.body.getReader();
-      
-      // Read function that processes each chunk
-      function readChunk() {
-        reader.read().then(({ done, value }) => {
-          if (done) {
-            console.log("Stream complete");
-            if (mediaSource && mediaSource.readyState === 'open') {
-              try {
-                mediaSource.endOfStream();
-              } catch (e) {
-                console.error("Error ending stream:", e);
-              }
-            }
-            return;
-          }
-          
-          if (value) {
-            try {
-              // For the first chunk, we need to handle the WAV header properly
-              if (isFirstChunk && !headerProcessed) {
-                isFirstChunk = false;
-                headerProcessed = true;
-                
-                // Store the chunk in the queue to be processed
-                if (isSourceOpen && sourceBuffer) {
-                  // Append this chunk directly if sourceBuffer is ready
-                  if (!sourceBuffer.updating) {
-                    sourceBuffer.appendBuffer(value.buffer);
-                  } else {
-                    audioQueue.push(value.buffer);
-                  }
-                } else {
-                  // Queue for when sourceBuffer becomes available
-                  audioQueue.push(value.buffer);
-                }
-              } else {
-                // For subsequent chunks
-                if (isSourceOpen && sourceBuffer) {
-                  if (!sourceBuffer.updating) {
-                    sourceBuffer.appendBuffer(value.buffer);
-                  } else {
-                    audioQueue.push(value.buffer);
-                  }
-                } else {
-                  audioQueue.push(value.buffer);
-                }
-              }
-              
-              // Set up event listener for updateend if not already set
-              if (sourceBuffer && !sourceBuffer.onupdateend) {
-                sourceBuffer.onupdateend = processAudioQueue;
-              }
-              
-            } catch (e) {
-              console.error("Error processing audio chunk:", e);
-            }
-          }
-          
-          // Continue reading
-          readChunk();
-        }).catch(error => {
-          console.error("Error reading chunk:", error);
-          // Try to end the stream gracefully
-          if (mediaSource && mediaSource.readyState === 'open') {
-            try {
-              mediaSource.endOfStream();
-            } catch (e) {
-              console.error("Error ending stream after read error:", e);
-            }
-          }
-        });
-      }
-      
-      // Start reading
-      readChunk();
-    })
-    .catch(error => {
-      console.error("Error setting up fetch:", error);
-      // Fallback to file mode
-      streamingMode = false;
-      processText(text);
-    });
-  }
-  
-  // Function to fetch and play complete audio file
-  function fetchAudioFile() {
-    fetch(apiUrl, {
-      method: "POST",
-      headers: headers,
-      body: JSON.stringify(payload)
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`API request failed with status: ${response.status}`);
-        }
-        return response.blob();
-      })
-      .then((audioBlob) => {
-        const audioUrl = URL.createObjectURL(audioBlob);
-        currentAudio = new Audio(audioUrl);
-        currentAudio.play().catch(e => console.error("Error playing audio:", e));
-      })
-      .catch((error) => {
-        console.error("Error calling TTS API:", error);
-        alert(`TTS API Error: ${error.message}`);
-      });
-  }
 }

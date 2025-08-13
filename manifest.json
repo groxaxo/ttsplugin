@@ -1,14 +1,22 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "Custom TTS Reader",
   "author": "BassGaming",
   "description": "TTS implementation for the OpenAI api format. Click 'Read Selected Text' in the context menu after highlighting text.",
   "version": "1.2.5",
-  "permissions": ["storage", "contextMenus", "activeTab", "tabs", "webRequest", "webRequestBlocking", "<all_urls>"],
-  "content_security_policy": "default-src 'self' https:; connect-src https:;",
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "activeTab",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
-    "scripts": ["background.js"],
-    "persistent": true
+    "service_worker": "background.js",
+    "type": "module"
   },
   "options_ui": {
     "page": "options.html",
@@ -17,15 +25,9 @@
   "icons": {
     "48": "icons/icon.png"
   },
-  "browser_action": {
+  "action": {
     "default_popup": "popup.html",
     "default_icon": "icons/icon.png",
     "default_title": "Custom TTS Reader"
-  },
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "{cfc0ee5e-1bc1-4e83-95b9-98b530ba7403}",
-      "strict_min_version": "79.0"
-    }
   }
 }
