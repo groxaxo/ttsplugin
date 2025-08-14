@@ -8,6 +8,16 @@ This is a browser extension that provides in-browser speech-to-text (STT) and te
 *   **Speech-to-Text:** Record audio from your microphone and have it transcribed to text using the Whisper model.
 *   **Text-to-Speech:** Highlight any text on a webpage, right-click, and select "Read Selected Text" to have it read aloud.
 
+## Installation
+
+1.  Download or clone this repository to your local machine.
+2.  Open your Chrome-based browser and navigate to `chrome://extensions`.
+3.  Enable "Developer mode" using the toggle switch in the top-right corner.
+4.  Click the "Load unpacked" button that appears.
+5.  Select the directory where you downloaded the repository.
+
+The extension should now be installed and ready to use.
+
 ## How to Use
 
 *   **Speech-to-Text:**
