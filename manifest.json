@@ -19,8 +19,7 @@
     "type": "module"
   },
   "options_ui": {
-    "page": "options.html",
-    "chrome_style": true
+    "page": "options.html"
   },
   "icons": {
     "48": "icons/icon.png"
