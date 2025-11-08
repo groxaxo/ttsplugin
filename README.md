@@ -1,17 +1,59 @@
 
 # Custom TTS Reader
 
-TTS implementation for the OpenAI api format. It can probably be used for any OpenAI api compliant service. 
+TTS implementation for the OpenAI API format. It can probably be used for any OpenAI API compliant service. 
 Click 'Read Selected Text' in the context menu after highlighting text.
 
 This addon is for Firefox!
 
-
-
 ## Installation
+
+### Browser Extension Installation
 
 On Mozilla Addons:
 https://addons.mozilla.org/en-US/firefox/addon/custom-tts-reader/
+
+### Backend Service Installation
+
+To use this extension, you'll need a compatible TTS backend service running. Here's how to set up **Kokoro FastAPI**, a popular OpenAI-compatible TTS service:
+
+#### Using conda
+
+```bash
+# Clone the Kokoro FastAPI repository
+git clone https://github.com/remsky/Kokoro-FastAPI.git
+cd Kokoro-FastAPI
+
+# Create a conda environment
+conda create -n kokoro python=3.10
+conda activate kokoro
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the service
+python app.py
+```
+
+#### Using uv pip
+
+```bash
+# Clone the Kokoro FastAPI repository
+git clone https://github.com/remsky/Kokoro-FastAPI.git
+cd Kokoro-FastAPI
+
+# Create a virtual environment and install with uv
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
+uv pip install -r requirements.txt
+
+# Run the service
+python app.py
+```
+
+After starting the backend, configure the extension to point to your service URL (default: `http://localhost:5005/v1/audio/speech`).
     
 ## Description
 
@@ -21,7 +63,7 @@ This is a TTS implementation for the OpenAI API format, specifically designed to
 Click 'Read Selected Text' in the context menu after highlighting text.
 
 You can change the API URL, API key, speed and voice by clicking the extension icon in the toolbar.
-The streaming mode is not working for now since Firefox doesn't support PMC natively.
+The streaming mode is not working for now since Firefox doesn't support PCM natively.
 
 Since you can host your own speech endpoint, privacy and accessibility are as good as the service you're running.
 
