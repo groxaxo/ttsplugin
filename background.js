@@ -1,8 +1,8 @@
 let apiUrl = "";
 let apiKey = "";
 let speechSpeed = 1.0;
-let voice = "tara";  // Default to Orpheus 'tara' voice
-let model = "orpheus";  // Default to orpheus model
+let voice = "en-Alice_woman";  // Default voice for /v1/audio/speech endpoint
+let model = "tts-1";  // Default to tts-1 model
 let streamingMode = false;
 let currentAudio = null;
 let mediaSource = null;
@@ -43,8 +43,8 @@ browser.storage.local.get(["apiUrl", "apiKey", "speechSpeed", "voice", "model", 
   apiUrl = data.apiUrl || "http://localhost:5005/v1/audio/speech";
   apiKey = data.apiKey || "not-needed";
   speechSpeed = data.speechSpeed || 1.0;
-  voice = data.voice || "tara";
-  model = data.model || "orpheus";
+  voice = data.voice || "en-Alice_woman";
+  model = data.model || "tts-1";
   streamingMode = data.streamingMode || false; // Load streaming mode setting
 });
 
@@ -148,7 +148,7 @@ function processText(text) {
     model: model,
     input: text,
     voice: voice,
-    response_format: "wav", // Orpheus TTS supports WAV format
+    response_format: "wav", // Default format for /v1/audio/speech endpoint (can also use "opus" for efficiency)
     speed: speechSpeed
   };
 

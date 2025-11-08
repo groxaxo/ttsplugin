@@ -12,11 +12,11 @@ document.addEventListener("DOMContentLoaded", () => {
   // Load settings
   browser.storage.local.get(["apiUrl", "apiKey", "speechSpeed", "voice", "model", "streamingMode"])
     .then((data) => {
-      apiUrlInput.value = data.apiUrl || "http://host.docker.internal:8880/v1/audio/speech";
+      apiUrlInput.value = data.apiUrl || "http://localhost:5005/v1/audio/speech";
       apiKeyInput.value = data.apiKey || "not-needed";
-      voiceInput.value = data.voice || "af_bella+bf_emma+af_nicole";
+      voiceInput.value = data.voice || "en-Alice_woman";
       speedInput.value = data.speechSpeed || 1.0;
-      modelInput.value = data.model || "kokoro";
+      modelInput.value = data.model || "tts-1";
       streamingModeInput.checked = data.streamingMode || false;
     });
 
